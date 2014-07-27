@@ -1,0 +1,179 @@
+---
+title: "Human Activity Recognition Report"
+author: "Andreas Stenmark"
+date: "27 juli 2014"
+output: html_document
+---
+
+```{r echo=FALSE, results='hide'}
+library(caret)
+```
+
+## Synopsis
+
+The purpose of this report is to present a machine learning algorithm for predicting activity quality from activity monitors. The goal is to predict 20 test cases based on collected data. The data is cleaned up, analysed for principal components, and a learning algorithm is fitted using random forests.  When applied to the test cases, the algorithm ends up predicting 19 out of the 20 test cases correctly.
+
+## Data Processing
+
+The Human Activity Recognition data used for this report is collected
+from the Weight Lifting Exercise dataset at http://groupware.les.inf.puc-rio.br/har.
+
+Data were provided in two source files:
+
+- "pml-training.csv" for the training data
+- "pml-testing.csv" contains 20 activities to be predicted
+
+The dataset contains 19622 observations of 160 variables, many of which are blank or not available in the data files.  For this reason, the data needs to be cleaned and appropriate features selected as predictors.  Code is presented below.  Because of the long processing time, it is not evaluated in this report, and some results have been copied in manually.
+
+First, this is the code for reading the data and doing basic cleaning:
+
+```{r cache=TRUE}
+testing <- read.csv("pml-testing.csv", stringsAsFactors=FALSE)
+pml_training <- read.csv("pml-training.csv", stringsAsFactors=FALSE)
+
+pml_training$user_name <- as.factor(pml_training$user_name)
+pml_training$cvtd_timestamp <- as.POSIXlt(pml_training$cvtd_timestamp, format = "%d/%m/%Y %H:%M")
+pml_training$new_window <- as.factor(pml_training$new_window)
+pml_training$classe <- as.factor(pml_training$classe)
+pml_training[pml_training == ""] <- NA
+```
+
+The training data is split into a training set and a cross validation set, to enable estimating the out of sample error later:
+
+```{r}
+inTrain <- createDataPartition(pml_training$classe, p = 0.8, list = FALSE)
+training <- pml_training[inTrain,]
+validation <- pml_training[-inTrain,]
+```
+
+Some variables are informatory, such as user names and timestamps, and have no impact on the prediction algorithm, so they are removed:
+
+```{r}
+cols <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+training <- training[, !(colnames(training) %in% cols)]
+validation <- validation[, !(colnames(validation) %in% cols)]
+```
+
+Finally, variables with many blank entries are removed.  It turns out that the variables are either fully populated, or almost completely empty, so the following simple code does a good job of removing (nearly) blank variables.  For other datasets this processing may need to be more elaborate.
+
+```{r}
+training <- training[,sapply(training, function(x) !any(is.na(x)))]
+validation <- validation[,sapply(validation, function(x) !any(is.na(x)))]
+```
+
+## Principal Components
+
+Principal components analysis is performed while training the model using the caret package, and applied to the training and cross validation sets.  It produces principal components similar to this.  In the actual training of the model however, the principal component analysis is integrated in the train function call.
+
+```{r}
+preProc <- preProcess(training[,-53], method="pca")
+print(preProc)
+```
+
+
+## Training Model
+
+Here the model is fitted to the training data using random forests.
+
+```{r eval=FALSE}
+modelFit <- train(classe ~ ., data = training, method = "rf", preProcess = "pca")
+```
+
+The confusion matrix on the training data shows the in sample accuracy to be ~98%.
+
+```{r eval=FALSE}
+# In sample error
+confusionMatrix(training$classe, predict(modelFit, training))
+```
+
+```
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 4428   25   11    0    0
+         B   38 2947   53    0    0
+         C    4   48 2672    7    7
+         D    2   10   48 2512    1
+         E    2    7   18   40 2819
+
+Overall Statistics
+                                          
+               Accuracy : 0.9796          
+                 95% CI : (0.9772, 0.9817)
+    No Information Rate : 0.285           
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9741          
+ Mcnemar's Test P-Value : < 2.2e-16       
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            0.9897   0.9704   0.9536   0.9816   0.9972
+Specificity            0.9968   0.9928   0.9949   0.9954   0.9948
+Pos Pred Value         0.9919   0.9700   0.9759   0.9763   0.9768
+Neg Pred Value         0.9959   0.9929   0.9900   0.9964   0.9994
+Prevalence             0.2850   0.1935   0.1785   0.1630   0.1801
+Detection Rate         0.2821   0.1877   0.1702   0.1600   0.1796
+Detection Prevalence   0.2843   0.1935   0.1744   0.1639   0.1838
+Balanced Accuracy      0.9933   0.9816   0.9742   0.9885   0.9960
+```
+
+When tested on the cross validation set, the accuracy turns out to be ~97%.
+
+```{r eval=FALSE}
+# Out of sample error
+confusionMatrix(validation$classe, predict(modelFit, validation))
+```
+
+```
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1101    8    2    4    1
+         B   11  735   13    0    0
+         C    0    8  668    5    3
+         D    0    2   26  614    1
+         E    1    5    6   11  698
+
+Overall Statistics
+                                          
+               Accuracy : 0.9727          
+                 95% CI : (0.9671, 0.9776)
+    No Information Rate : 0.2837          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9655          
+ Mcnemar's Test P-Value : 3.47e-05        
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            0.9892   0.9697   0.9343   0.9685   0.9929
+Specificity            0.9947   0.9924   0.9950   0.9912   0.9929
+Pos Pred Value         0.9866   0.9684   0.9766   0.9549   0.9681
+Neg Pred Value         0.9957   0.9927   0.9855   0.9939   0.9984
+Prevalence             0.2837   0.1932   0.1823   0.1616   0.1792
+Detection Rate         0.2807   0.1874   0.1703   0.1565   0.1779
+Detection Prevalence   0.2845   0.1935   0.1744   0.1639   0.1838
+Balanced Accuracy      0.9919   0.9810   0.9646   0.9798   0.9929
+```
+
+## Results
+
+Finally, the trained and verified model is applied to the 20 test cases in the testing dataset.  Judging by the autograder, this model correctly predicted 19 out of the 20 test cases.
+
+```{r eval=FALSE}
+predict(modelFit, testing)
+```
+
+```
+ [1] B A B A A E D D A A B C B A E E A B B B
+Levels: A B C D E
+```
+
+## References
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
